@@ -83,7 +83,22 @@ def test_build_outbound_posts_spills_long_caption_to_followups(post_factory, pho
     assert any(chunk.text for chunk in out[1:])
 
 
-def test_build_outbound_posts_multiple_source_posts(post_factory, utc_now):
+def test_build_outbound_posts_multiple_source_posts(post_factory, utc_now, photo):
+    first = post_factory("1", text="one", created_at=utc_now, media=[photo] * 4)
+    second = post_factory(
+        "2",
+        text="two",
+        created_at=utc_now + timedelta(minutes=1),
+        conversation_id="thread",
+    )
+    out = build_outbound_posts([second, first], TELEGRAM_LIMITS)
+    assert len(out) == 1
+    assert out[0].text == "one\n\ntwo"
+    assert len(out[0].media) == 4
+    assert out[0].source_post_ids == ["1", "2"]
+
+
+def test_build_outbound_posts_merges_text_only_thread(post_factory, utc_now):
     first = post_factory("1", text="one", created_at=utc_now)
     second = post_factory(
         "2",
@@ -92,7 +107,45 @@ def test_build_outbound_posts_multiple_source_posts(post_factory, utc_now):
         conversation_id="thread",
     )
     out = build_outbound_posts([second, first], TELEGRAM_LIMITS)
-    assert [o.text for o in out] == ["one", "two"]
+    assert len(out) == 1
+    assert out[0].text == "one\n\ntwo"
+    assert out[0].source_post_ids == ["1", "2"]
+
+
+def test_build_outbound_posts_splits_merged_thread_when_media_exceeds_limit(
+    post_factory, utc_now, photo
+):
+    first = post_factory("1", text="photos", created_at=utc_now, media=[photo] * 4)
+    second = post_factory(
+        "2",
+        text="more",
+        created_at=utc_now + timedelta(minutes=1),
+        conversation_id="thread",
+        media=[photo],
+    )
+    out = build_outbound_posts([first, second], TELEGRAM_LIMITS)
+    assert len(out) == 2
+    assert len(out[0].media) == 4
+    assert out[0].text == "photos\n\nmore"
+    assert len(out[1].media) == 1
+    assert out[0].source_post_ids == ["1", "2"]
+    assert out[1].source_post_ids == ["1", "2"]
+
+
+def test_build_outbound_posts_splits_merged_text_for_short_limit(post_factory, utc_now):
+    first = post_factory("1", text="a" * 300, created_at=utc_now)
+    second = post_factory(
+        "2",
+        text="b" * 300,
+        created_at=utc_now + timedelta(minutes=1),
+        conversation_id="thread",
+    )
+    out = build_outbound_posts(
+        [first, second], NETWORK_LIMITS[NETWORK_MASTODON]
+    )
+    assert len(out) > 1
+    assert all(len(chunk.text) <= 500 for chunk in out)
+    assert all(chunk.source_post_ids == ["1", "2"] for chunk in out)
 
 
 def test_build_outbound_posts_empty_input():

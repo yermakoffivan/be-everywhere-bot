@@ -87,8 +87,33 @@ def _chunk(items: list[MediaItem], size: int) -> list[list[MediaItem]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
-def _outbound_for_single_post(post: Post, limits: NetworkLimits) -> list[OutboundPost]:
-    source_ids = [post.id]
+def _merge_thread_posts(posts: list[Post]) -> Post:
+    """Combine thread parts into one logical post (text + media in order)."""
+    ordered = sort_chronologically(posts)
+    first = ordered[0]
+    texts = [(post.text or "").strip() for post in ordered]
+    combined_text = "\n\n".join(text for text in texts if text)
+    combined_media = [item for post in ordered for item in post.media]
+    return Post(
+        id=first.id,
+        text=combined_text,
+        created_at=first.created_at,
+        conversation_id=first.conversation_id,
+        author_id=first.author_id,
+        media=combined_media,
+        in_reply_to_id=first.in_reply_to_id,
+        in_reply_to_user_id=first.in_reply_to_user_id,
+        is_thread_root=first.is_thread_root,
+    )
+
+
+def _outbound_for_single_post(
+    post: Post,
+    limits: NetworkLimits,
+    *,
+    source_post_ids: list[str] | None = None,
+) -> list[OutboundPost]:
+    source_ids = source_post_ids or [post.id]
     text = (post.text or "").strip()
     media = list(post.media)
 
@@ -129,8 +154,16 @@ def _outbound_for_single_post(post: Post, limits: NetworkLimits) -> list[Outboun
                 in_reply_to_user_id=post.in_reply_to_user_id,
                 is_thread_root=post.is_thread_root,
             )
-            out.extend(_outbound_for_single_post(photo_post, limits))
-            out.extend(_outbound_for_single_post(video_post, limits))
+            out.extend(
+                _outbound_for_single_post(
+                    photo_post, limits, source_post_ids=source_ids
+                )
+            )
+            out.extend(
+                _outbound_for_single_post(
+                    video_post, limits, source_post_ids=source_ids
+                )
+            )
             return out
 
     out: list[OutboundPost] = []
@@ -166,10 +199,13 @@ def build_outbound_posts(
         return []
 
     limits = limits or TELEGRAM_LIMITS
-    out: list[OutboundPost] = []
-    for post in sort_chronologically(posts):
-        out.extend(_outbound_for_single_post(post, limits))
-    return out
+    ordered = sort_chronologically(posts)
+    if len(ordered) == 1:
+        return _outbound_for_single_post(ordered[0], limits)
+
+    merged = _merge_thread_posts(ordered)
+    source_ids = [post.id for post in ordered]
+    return _outbound_for_single_post(merged, limits, source_post_ids=source_ids)
 
 
 def get_network_limits(network: str) -> NetworkLimits:
