@@ -7,6 +7,7 @@ from sqlalchemy.engine import Engine
 from config import (
     NETWORK_BLUESKY,
     NETWORK_INSTAGRAM,
+    NETWORK_LINKEDIN,
     NETWORK_MASTODON,
     NETWORK_RSS,
     NETWORK_TELEGRAM,
@@ -175,4 +176,8 @@ def account_display_name(account: Account, engine: Engine) -> str:
         username = creds.get("username")
         if username:
             return f"@{username}"
+    if account.network == NETWORK_LINKEDIN:
+        display_name = creds.get("display_name")
+        if display_name:
+            return display_name
     return f"{account.network}:{account.label}"

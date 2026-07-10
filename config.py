@@ -27,6 +27,7 @@ NETWORK_THREADS = "threads"
 NETWORK_BLUESKY = "bluesky"
 NETWORK_RSS = "rss"
 NETWORK_INSTAGRAM = "instagram"
+NETWORK_LINKEDIN = "linkedin"
 
 NETWORKS: list[str] = [
     NETWORK_TWITTER,
@@ -36,6 +37,7 @@ NETWORKS: list[str] = [
     NETWORK_BLUESKY,
     NETWORK_RSS,
     NETWORK_INSTAGRAM,
+    NETWORK_LINKEDIN,
 ]
 
 # Read-only sources — mesh sync publishes from these but never to them.
@@ -84,11 +86,18 @@ class InstagramAppConfig:
     facebook_graph_url: str = "https://graph.facebook.com/v21.0"
 
 
+@dataclass(frozen=True)
+class LinkedInAppConfig:
+    api_base_url: str = "https://api.linkedin.com"
+    api_version: str = "202504"
+
+
 TWITTER_APP = TwitterAppConfig()
 TELEGRAM_APP = TelegramAppConfig()
 THREADS_APP = ThreadsAppConfig()
 BLUESKY_APP = BlueskyAppConfig()
 INSTAGRAM_APP = InstagramAppConfig()
+LINKEDIN_APP = LinkedInAppConfig()
 
 TELEGRAM_LIMITS = NetworkLimits(max_text=4096, max_caption=1024, max_media_group=4)
 MASTODON_LIMITS = NetworkLimits(
@@ -99,6 +108,12 @@ TWITTER_LIMITS = NetworkLimits(max_text=280, max_caption=280, max_media_group=4)
 
 THREADS_LIMITS = NetworkLimits(max_text=500, max_caption=500, max_media_group=20)
 BLUESKY_LIMITS = NetworkLimits(max_text=300, max_caption=300, max_media_group=4)
+LINKEDIN_LIMITS = NetworkLimits(
+    max_text=3000,
+    max_caption=3000,
+    max_media_group=20,
+    allows_mixed_media=False,
+)
 
 NETWORK_LIMITS: dict[str, NetworkLimits] = {
     NETWORK_TELEGRAM: TELEGRAM_LIMITS,
@@ -106,6 +121,7 @@ NETWORK_LIMITS: dict[str, NetworkLimits] = {
     NETWORK_TWITTER: TWITTER_LIMITS,
     NETWORK_THREADS: THREADS_LIMITS,
     NETWORK_BLUESKY: BLUESKY_LIMITS,
+    NETWORK_LINKEDIN: LINKEDIN_LIMITS,
 }
 
 TWITTER_CREDENTIAL_KEYS = ("bearer_token", "user_id", "username")
@@ -115,3 +131,4 @@ THREADS_CREDENTIAL_KEYS = ("access_token", "user_id", "username")
 BLUESKY_CREDENTIAL_KEYS = ("handle", "did", "access_jwt", "refresh_jwt", "pds_url")
 RSS_CREDENTIAL_KEYS = ("feed_url",)
 INSTAGRAM_CREDENTIAL_KEYS = ("access_token", "user_id", "username")
+LINKEDIN_CREDENTIAL_KEYS = ("access_token", "person_urn", "display_name")

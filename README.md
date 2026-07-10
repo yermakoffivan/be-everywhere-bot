@@ -1,18 +1,16 @@
 # be-everywhere-bot
 
-A small Python app that **mesh-syncs** your posts across **X (Twitter)**, **Threads**, **Bluesky**, **Telegram**, **Mastodon**, **Instagram**, and **RSS feeds**. When a new post appears on any connected account, it is reposted to every other account. The bot tracks what was already synced so nothing is duplicated — including posts it created itself (so a Twitter thread reposted to Telegram is never echoed back to Twitter).
+A small Python app that **mesh-syncs** your posts across **X (Twitter)**, **Threads**, **Bluesky**, **Telegram**, **Mastodon**, **Instagram**, **LinkedIn**, and **RSS feeds**. When a new post appears on any connected account, it is reposted to every other account. The bot tracks what was already synced so nothing is duplicated — including posts it created itself (so a Twitter thread reposted to Telegram is never echoed back to Twitter).
 
 ## Features
 
-- **Mesh sync** — every configured account syncs to every other account
+- **Mesh sync** — every configured account syncs to every other
 - **Multiple accounts per network** — connect several Twitter/Telegram/Mastodon accounts with `--label`
 - **Thread support** — consecutive posts in the same conversation are merged when the destination allows
 - **Duplicate protection** — `sync_mappings` + `mirrored_posts` prevent re-syncing and circular reposts
 - **Smart filtering** (X) — skips retweets, quote tweets, `@`-replies, and replies to other people
 - **Source-only marker** — append `/x` to a post to keep it on that network only (not mesh-synced)
 - **Link unwrapping** — `t.co` and other shorteners are resolved before posting
-- **Two run modes** — continuous watch (cron schedule) and one-shot backfill (`--since`)
-- **Database migrations** — schema upgrades run automatically on startup
 
 ## Requirements
 
@@ -35,6 +33,7 @@ uv run python main.py --auth=threads
 uv run python main.py --auth=bluesky
 uv run python main.py --auth=rss
 uv run python main.py --auth=instagram
+uv run python main.py --auth=linkedin
 
 # Run continuous mesh sync
 uv run python main.py
@@ -53,54 +52,163 @@ uv run python main.py --auth=threads --label=main
 uv run python main.py --auth=bluesky --label=main
 uv run python main.py --auth=rss --label=blog
 uv run python main.py --auth=instagram --label=main
+uv run python main.py --auth=linkedin --label=main
 ```
 
 Re-running `--auth` with the same network + label updates credentials.
 
+Re-running `--auth` with the same network + label updates credentials.
+
+Use `--label` to connect multiple accounts on the same network (e.g. personal and work Twitter).
+
+---
+
 ### X (Twitter)
 
-Bearer token from [developer.x.com](https://developer.x.com/en/portal/dashboard) and your `@handle`.
+**Portal:** [developer.x.com](https://developer.x.com/en/portal/dashboard)
+
+**What you need:** Bearer Token + your `@handle`
+
+**Steps:**
+
+1. Sign in at the [X Developer Portal](https://developer.x.com/en/portal/dashboard).
+2. Create a **Project** and an **App** (or open an existing app).
+3. Open the app → **Keys and tokens** tab.
+4. Under **Bearer Token**, click **Generate** or **Regenerate** and copy the token.
+5. Note your X username without `@` (e.g. `vas3k`).
+6. Run `uv run python main.py --auth=twitter --label=main` and paste the token and username when prompted.
+
+**Notes:** X API v2 is pay-per-use (~$0.001 per owned timeline read). Watch mode only polls recent posts to limit cost. Top up credits at the [developer portal](https://developer.x.com/en/portal/dashboard) if you get HTTP 402.
+
+---
 
 ### Telegram
 
-Bot token from [@BotFather](https://t.me/BotFather) and channel ID (`@channel` or `-100…`). The bot must be a channel admin. New channel posts are received via `getUpdates` — the Bot API cannot backfill full channel history.
+**Portals:** [@BotFather](https://t.me/BotFather) · [Telegram Bot API docs](https://core.telegram.org/bots)
+
+**What you need:** Bot token + channel ID
+
+**Steps:**
+
+1. Open [@BotFather](https://t.me/BotFather) in Telegram and send `/newbot`.
+2. Follow the prompts to name your bot and copy the **bot token** (looks like `123456:ABC-DEF…`).
+3. Create a **channel** (or use an existing one) where posts should be synced.
+4. Add your bot to the channel as an **administrator** (needs permission to post).
+5. Find the channel ID:
+   - Public channel: `@yourchannel`
+   - Private channel: forward a message to [@userinfobot](https://t.me/userinfobot) or use the `-100…` numeric ID from your client
+6. Run `uv run python main.py --auth=telegram --label=main` and paste the bot token and channel ID.
+
+**Notes:** The Bot API cannot backfill full channel history — only posts received via `getUpdates` after the bot is set up are synced. For older content, backfill from X or Mastodon instead.
+
+---
 
 ### Mastodon
 
-Instance URL and access token (Preferences → Development → your app). Needs `read` + `write` scopes.
+**Portal:** your instance (e.g. [mastodon.social](https://mastodon.social))
+
+**What you need:** Instance URL + access token with `read` and `write` scopes
+
+**Steps:**
+
+1. Log in to your Mastodon instance.
+2. Go to **Preferences** → **Development** → **New application** (or open an existing app).
+3. Enable scopes **read** and **write**, then create the application.
+4. Copy the **Access token** shown for your account.
+5. Note your instance base URL (e.g. `https://mastodon.social` — no trailing slash).
+6. Run `uv run python main.py --auth=mastodon --label=main` and paste the URL and token.
+
+---
 
 ### Threads
 
-Access token from [developers.facebook.com](https://developers.facebook.com/apps/) with scopes `threads_basic` and `threads_content_publish`. Username is auto-detected from the token.
+**Portal:** [developers.facebook.com](https://developers.facebook.com/apps/)
 
-**Note:** Threads API requires media to be on a **public HTTPS URL** when publishing images/videos. Posts synced from X/Mastodon usually work; Telegram-sourced media may publish as text-only.
+**What you need:** User access token with Threads scopes
+
+**Steps:**
+
+1. Create or open an app at [Meta for Developers](https://developers.facebook.com/apps/).
+2. Add the **Threads API** product to your app.
+3. Under **Threads API** → tools / token generator, create a **User access token**.
+4. Grant scopes **`threads_basic`** and **`threads_content_publish`**.
+5. Copy the access token. Username is auto-detected if you leave it blank.
+6. Run `uv run python main.py --auth=threads --label=main` and paste the token.
+
+**Notes:** Publishing is limited to **250 posts per 24 hours** per profile. Media must be on a **public HTTPS URL** — posts from X/Mastodon usually work; Telegram-sourced media may publish as text-only.
+
+---
 
 ### Bluesky
 
-Handle and **app password** from Bluesky Settings → Privacy and security → App passwords (not your login password). Supports direct blob upload for images and videos.
+**Portal:** Bluesky app → **Settings** → **Privacy and security** → **App passwords**
 
-### RSS (one-way)
+**What you need:** Handle + app password (not your login password)
 
-Feed URL for any RSS 2.0 or Atom feed. Each item is published as **title**, **description/summary**, and a **link** to the original post.
+**Steps:**
 
-```bash
-uv run python main.py --auth=rss --label=blog
-# prompts for https://example.com/feed.xml
-```
+1. Log in to [Bluesky](https://bsky.app/) (web or app).
+2. Open **Settings** → **Privacy and security** → **App passwords**.
+3. Create a new app password and copy it (shown once).
+4. Note your full handle (e.g. `you.bsky.social`).
+5. Run `uv run python main.py --auth=bluesky --label=main` and enter handle and app password.
+6. Press Enter for the default PDS (`https://bsky.social`) unless you use a custom server.
 
-Use `--since=YYYY-MM-DD` to import older feed items on first run.
+---
 
-### Instagram (one-way)
+### RSS (source only)
 
-Instagram Business or Creator account as a **read-only source**. Feed posts are republished with their caption; active **stories** (24 h window) are synced too. Story slides posted within `POST_MIN_AGE_MINUTES` of each other are merged into one multi-media post on destinations that support it (Telegram, Mastodon, etc.).
+**What you need:** Feed URL (RSS 2.0 or Atom)
 
-Access token from [developers.facebook.com](https://developers.facebook.com/apps/) with scope `instagram_business_basic`. Username is auto-detected from the token.
+**Steps:**
 
-```bash
-uv run python main.py --auth=instagram --label=main
-```
+1. Find the feed URL for your blog or site (often `/feed`, `/feed.xml`, or `/atom.xml`).
+2. Verify it loads in a browser or feed reader.
+3. Run `uv run python main.py --auth=rss --label=blog` and paste the URL (e.g. `https://example.com/feed.xml`).
 
-Instagram is never used as a destination — content flows out, not in.
+**Notes:** RSS is **read-only** — items sync out to your social accounts but nothing is posted back. Each item is published as **title**, **description/summary**, and a **link**. Use `--since=YYYY-MM-DD` on first run to import older items.
+
+---
+
+### Instagram (source only)
+
+**Portal:** [developers.facebook.com](https://developers.facebook.com/apps/)
+
+**What you need:** Instagram Business or Creator account + user access token
+
+**Steps:**
+
+1. Convert your Instagram account to **Business** or **Creator** (Instagram app → Account type).
+2. Create or open an app at [Meta for Developers](https://developers.facebook.com/apps/).
+3. Add the **Instagram** product → **API setup with Instagram login**.
+4. Connect your Instagram account and generate a **User access token** with scope **`instagram_business_basic`**.
+5. Copy the access token. Username is auto-detected if omitted.
+6. Run `uv run python main.py --auth=instagram --label=main` and paste the token.
+
+**Notes:** Instagram is **read-only** in mesh sync — feed posts and active **stories** (24 h window) flow out to other networks, never in. Media URLs expire; the bot downloads media at publish time.
+
+---
+
+### LinkedIn
+
+**Portal:** [linkedin.com/developers](https://www.linkedin.com/developers/apps)
+
+**What you need:** Member access token with posting (and ideally reading) scopes
+
+**Steps:**
+
+1. Create an app at [LinkedIn Developers](https://www.linkedin.com/developers/apps) (linked to a Company Page).
+2. Under **Products**, request **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**.
+3. Open the **Auth** tab and note your OAuth settings (redirect URL if you use the OAuth flow).
+4. Generate a **member access token** with scopes:
+   - `openid`, `profile`, `email` — identity
+   - `w_member_social` — publish posts
+   - `r_member_social` — read your posts (may require [LinkedIn approval](https://learn.microsoft.com/en-us/linkedin/marketing/lms-faq); without it the account can publish but not act as a source)
+5. Run `uv run python main.py --auth=linkedin --label=main` and paste the token.
+
+**Notes:** Long posts are split at 3,000 characters. Thread continuations are posted as comments. Images upload via the LinkedIn Images API (up to 20 per post). Video is not supported yet.
+
+---
 
 ## Running
 
@@ -126,7 +234,7 @@ Verbose output:
 uv run pytest -v
 ```
 
-Coverage includes every network module (`apis/twitter`, `telegram`, `mastodon`, `threads`, `bluesky`, `instagram`, `rss`), shared helpers (`utils/`), sync engine, and database sync state.
+Coverage includes every network module (`apis/twitter`, `telegram`, `mastodon`, `threads`, `bluesky`, `instagram`, `linkedin`, `rss`), shared helpers (`utils/`), sync engine, and database sync state.
 
 CI runs the same suite on every push and pull request via GitHub Actions (`.github/workflows/tests.yml`).
 
@@ -153,53 +261,9 @@ docker compose run --rm bot uv run python main.py --auth=threads
 docker compose run --rm bot uv run python main.py --auth=bluesky
 docker compose run --rm bot uv run python main.py --auth=rss
 docker compose run --rm bot uv run python main.py --auth=instagram
+docker compose run --rm bot uv run python main.py --auth=linkedin
 docker compose up -d
 ```
-
-## How it works
-
-```mermaid
-flowchart TB
-    subgraph accounts [Configured accounts]
-        TW["Twitter @you"]
-        TG["Telegram channel"]
-        M["Mastodon @you"]
-        TH["Threads @you"]
-        BS["Bluesky @you"]
-        RSS["RSS feed"]
-        IG["Instagram @you"]
-    end
-
-    subgraph sync [Each sync cycle]
-        Fetch["Fetch new posts\n(skip mirrored)"]
-        Fan["Fan out to\nevery other account"]
-        Map["Record sync_mappings\n+ mirrored_posts"]
-    end
-
-    TW --> Fetch
-    TG --> Fetch
-    M --> Fetch
-    TH --> Fetch
-    BS --> Fetch
-    RSS --> Fetch
-    IG --> Fetch
-    Fetch --> Fan --> Map
-```
-
-### Duplicate prevention
-
-Two tables work together:
-
-| Table | Purpose |
-|-------|---------|
-| `sync_mappings` | `(source_account, source_post) → dest_account` — "already propagated" |
-| `mirrored_posts` | `post_id` on an account that was **created by sync** — skipped on fetch |
-
-When a Twitter thread `[A, B, C]` is merged into one Telegram message `X`:
-
-- Three mapping rows: `A→X`, `B→X`, `C→X` (same dest post id)
-- One mirrored row: Telegram post `X`
-- Next run: Twitter posts are skipped for Telegram; Telegram post `X` is never fetched as new content
 
 ### Project structure
 
@@ -229,14 +293,6 @@ tests/                      # pytest suite
 | `TWITTER_FETCH_PAGE_SIZE` | `10` | X tweets per page; next page only if all are new |
 | `WATCH_OVERLAP_HOURS` | `6` | Re-fetch overlap for threads / retries |
 
-## Database migrations
-
-**You don't need a separate migrate step.** Every command that touches the database (`main.py` watch mode, `--auth`, `--since`, `--list-accounts`, etc.) calls `get_engine()`, which:
-
-1. Creates any missing tables
-2. Runs pending migrations from `db/migrations/versions/`
-3. Records applied versions in `schema_migrations`
-
 ### Upgrading an existing install
 
 Pull the new code, rebuild Docker if you use it, then start as usual:
@@ -251,7 +307,6 @@ docker compose build
 docker compose up -d           # migrates on container start
 ```
 
-Migration `001_mesh_accounts` converts the old `credentials` / `posted` / `sync_state` tables to the new multi-account schema. Your data in `./data/be_everywhere.db` is preserved via the Docker volume.
 
 ### Migrate only (no sync)
 

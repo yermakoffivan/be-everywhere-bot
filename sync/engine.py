@@ -7,6 +7,7 @@ from types import ModuleType
 from sqlalchemy.engine import Engine
 
 import apis.bluesky as bluesky
+import apis.linkedin as linkedin
 import apis.instagram as instagram
 import apis.mastodon as mastodon
 import apis.rss as rss
@@ -19,6 +20,7 @@ from config import (
     BACKFILL_POST_DELAY_SECONDS,
     NETWORK_BLUESKY,
     NETWORK_INSTAGRAM,
+    NETWORK_LINKEDIN,
     NETWORK_MASTODON,
     NETWORK_RSS,
     NETWORK_TELEGRAM,
@@ -59,6 +61,7 @@ _NETWORKS: dict[str, ModuleType] = {
     NETWORK_BLUESKY: bluesky,
     NETWORK_RSS: rss,
     NETWORK_INSTAGRAM: instagram,
+    NETWORK_LINKEDIN: linkedin,
 }
 
 

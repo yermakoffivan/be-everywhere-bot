@@ -1,6 +1,12 @@
 from db.accounts import Account
 from apis.types import MediaItem, OutboundPost, Post
-from config import NETWORK_INSTAGRAM, NETWORK_RSS, NETWORK_TWITTER, SOURCE_ONLY_NETWORKS
+from config import (
+    NETWORK_INSTAGRAM,
+    NETWORK_LINKEDIN,
+    NETWORK_RSS,
+    NETWORK_TWITTER,
+    SOURCE_ONLY_NETWORKS,
+)
 from sync.engine import (
     _dest_id_per_source_post,
     _destination_accounts,
@@ -14,6 +20,7 @@ def test_source_only_networks():
     assert NETWORK_RSS in SOURCE_ONLY_NETWORKS
     assert NETWORK_INSTAGRAM in SOURCE_ONLY_NETWORKS
     assert NETWORK_TWITTER not in SOURCE_ONLY_NETWORKS
+    assert NETWORK_LINKEDIN not in SOURCE_ONLY_NETWORKS
 
 
 def test_group_by_conversation(post_factory, utc_now):
@@ -44,8 +51,11 @@ def test_destination_accounts_excludes_self_and_source_only(post_factory):
     dest = Account(id=2, network="telegram", label="default", remote_id="2")
     rss = Account(id=3, network=NETWORK_RSS, label="blog", remote_id="3")
     instagram = Account(id=4, network=NETWORK_INSTAGRAM, label="main", remote_id="4")
-    result = _destination_accounts(source, [source, dest, rss, instagram])
-    assert result == [dest]
+    linkedin = Account(id=5, network=NETWORK_LINKEDIN, label="main", remote_id="5")
+    result = _destination_accounts(
+        source, [source, dest, rss, instagram, linkedin]
+    )
+    assert result == [dest, linkedin]
 
 
 def test_slice_media_bytes():
