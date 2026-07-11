@@ -8,6 +8,7 @@ import httpx
 from sqlalchemy.engine import Engine
 
 from apis.types import MediaItem, OutboundPost, Post, PublishResult
+from utils.media import ensure_not_mixed, partition_photos_and_videos
 from utils.posts import sort_chronologically
 from config import NETWORK_MASTODON
 from db.accounts import (
@@ -171,51 +172,6 @@ def _media_content_type(item: MediaItem) -> str:
 
 
 _MAX_IMAGES = 4
-_VIDEO_TYPES = frozenset({"video", "animated_gif"})
-
-
-def _is_photo(item: MediaItem) -> bool:
-    return item.media_type == "photo"
-
-
-def _is_video(item: MediaItem) -> bool:
-    return item.media_type in _VIDEO_TYPES
-
-
-def _partition_media_for_publish(
-    media: list[MediaItem],
-    bytes_list: list[bytes],
-    log_id: str,
-) -> tuple[list[tuple[MediaItem, bytes]], list[tuple[MediaItem, bytes]]]:
-    """Split attachments for Mastodon: up to 4 images or 1 video per status, never mixed."""
-    photos = [(item, raw) for item, raw in zip(media, bytes_list) if _is_photo(item)]
-    videos = [(item, raw) for item, raw in zip(media, bytes_list) if _is_video(item)]
-    skipped = len(media) - len(photos) - len(videos)
-    if skipped:
-        logger.warning(
-            "[%s] Mastodon: skipping %d unsupported media attachment(s)",
-            log_id,
-            skipped,
-        )
-
-    if len(photos) > _MAX_IMAGES:
-        logger.warning(
-            "[%s] Mastodon: keeping first %d of %d image(s)",
-            log_id,
-            _MAX_IMAGES,
-            len(photos),
-        )
-        photos = photos[:_MAX_IMAGES]
-
-    if len(videos) > 1:
-        logger.warning(
-            "[%s] Mastodon: keeping first of %d video(s)",
-            log_id,
-            len(videos),
-        )
-        videos = videos[:1]
-
-    return photos, videos
 
 
 async def _post_status(
@@ -426,14 +382,10 @@ async def publish_outbound(
     photos: list[tuple[MediaItem, bytes]] = []
     videos: list[tuple[MediaItem, bytes]] = []
     if media and bytes_list:
-        photos, videos = _partition_media_for_publish(media, bytes_list, log_id)
-        if photos and videos:
-            logger.warning(
-                "[%s] Mastodon: mixed photo+video in one outbound — "
-                "posting images only (split outbounds upstream)",
-                log_id,
-            )
-            videos = []
+        photos, videos = partition_photos_and_videos(
+            media, bytes_list, max_photos=_MAX_IMAGES, max_videos=1, log_id=log_id
+        )
+        ensure_not_mixed(photos, videos, network="Mastodon")
 
     attachments = photos or videos
 

@@ -6,12 +6,9 @@ import respx
 
 from apis.mastodon import (
     _extract_media,
-    _is_photo,
-    _is_video,
     _media_content_type,
     _media_filename,
     _normalize_thread_roots,
-    _partition_media_for_publish,
     _status_to_post,
     _strip_html,
     publish_outbound,
@@ -19,6 +16,7 @@ from apis.mastodon import (
 from apis.types import MediaItem, OutboundPost, Post
 from config import NETWORK_MASTODON
 from db.accounts import create_account, set_credentials
+from utils.media import is_photo, is_video, partition_photos_and_videos
 
 
 def _items(*types: str) -> tuple[list[MediaItem], list[bytes]]:
@@ -105,36 +103,36 @@ def test_normalize_thread_roots(post_factory, utc_now):
 
 def test_partition_photos_only():
     media, raw = _items("photo", "photo", "photo")
-    photos, videos = _partition_media_for_publish(media, raw, "post-1")
+    photos, videos = partition_photos_and_videos(media, raw, log_id="post-1")
     assert len(photos) == 3
     assert videos == []
 
 
 def test_partition_caps_photos_at_four():
     media, raw = _items("photo", "photo", "photo", "photo", "photo")
-    photos, videos = _partition_media_for_publish(media, raw, "post-1")
+    photos, videos = partition_photos_and_videos(media, raw, log_id="post-1")
     assert len(photos) == 4
     assert videos == []
 
 
 def test_partition_video_only():
     media, raw = _items("video", "video")
-    photos, videos = _partition_media_for_publish(media, raw, "post-1")
+    photos, videos = partition_photos_and_videos(media, raw, log_id="post-1")
     assert photos == []
     assert len(videos) == 1
 
 
 def test_partition_mixed_keeps_both_lists_separate():
     media, raw = _items("photo", "photo", "video")
-    photos, videos = _partition_media_for_publish(media, raw, "post-1")
+    photos, videos = partition_photos_and_videos(media, raw, log_id="post-1")
     assert len(photos) == 2
     assert len(videos) == 1
 
 
 def test_is_photo_and_video_helpers():
-    assert _is_photo(MediaItem(url="x", media_type="photo"))
-    assert _is_video(MediaItem(url="x", media_type="video"))
-    assert _is_video(MediaItem(url="x", media_type="animated_gif"))
+    assert is_photo(MediaItem(url="x", media_type="photo"))
+    assert is_video(MediaItem(url="x", media_type="video"))
+    assert is_video(MediaItem(url="x", media_type="animated_gif"))
 
 
 def test_media_filename_and_content_type():
@@ -193,7 +191,7 @@ async def test_publish_outbound_photos_only(engine):
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_publish_mixed_outbound_posts_photos_only(engine):
+async def test_publish_mixed_outbound_raises(engine):
     account = create_account(engine, NETWORK_MASTODON, "default", "acct-1")
     set_credentials(
         engine,
@@ -206,17 +204,6 @@ async def test_publish_mixed_outbound_posts_photos_only(engine):
         },
     )
 
-    respx.post("https://mastodon.test/api/v1/media").mock(
-        side_effect=lambda _r: httpx.Response(200, json={"id": "1"})
-    )
-    status_calls: list[str] = []
-
-    def record_status(request: httpx.Request) -> httpx.Response:
-        status_calls.append(request.read().decode())
-        return httpx.Response(200, json={"id": "100"})
-
-    respx.post("https://mastodon.test/api/v1/statuses").mock(side_effect=record_status)
-
     outbound = OutboundPost(
         text="caption",
         media=[
@@ -228,8 +215,5 @@ async def test_publish_mixed_outbound_posts_photos_only(engine):
     )
     raw = [b"img1", b"img2", b"vid"]
 
-    result = await publish_outbound(engine, account.id, outbound, raw)
-
-    assert result.post_id == "100"
-    assert len(status_calls) == 1
-    assert "in_reply_to_id" not in status_calls[0]
+    with pytest.raises(RuntimeError, match="mixed photos and videos"):
+        await publish_outbound(engine, account.id, outbound, raw)

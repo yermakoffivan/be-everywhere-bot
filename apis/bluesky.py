@@ -9,7 +9,7 @@ from sqlalchemy.engine import Engine
 
 from utils.http_utils import format_api_error, parse_error_detail
 from apis.types import MediaItem, OutboundPost, Post, PublishResult
-from utils.posts import sort_chronologically
+from utils.media import ensure_not_mixed, partition_photos_and_videos
 from config import BLUESKY_APP, NETWORK_BLUESKY
 from db.accounts import (
     Account,
@@ -344,29 +344,29 @@ async def _build_embed(
     session: BlueskySession,
     media: list[MediaItem],
     media_bytes: list[bytes],
+    *,
+    log_id: str = "?",
 ) -> dict[str, Any] | None:
     if not media:
         return None
 
-    images: list[dict[str, Any]] = []
-    video_blob: dict[str, Any] | None = None
+    photos, videos = partition_photos_and_videos(
+        media, media_bytes, max_photos=4, max_videos=1, log_id=log_id
+    )
+    ensure_not_mixed(photos, videos, network="Bluesky")
 
-    for item, raw in zip(media, media_bytes):
-        if item.media_type == "photo" and len(images) < 4:
+    if photos:
+        images: list[dict[str, Any]] = []
+        for item, raw in photos:
             blob = await _upload_blob(session, raw, item)
-            images.append(
-                {
-                    "alt": item.alt_text or "",
-                    "image": blob,
-                }
-            )
-        elif item.media_type in ("video", "animated_gif") and video_blob is None:
-            video_blob = await _upload_blob(session, raw, item)
-
-    if images:
+            images.append({"alt": item.alt_text or "", "image": blob})
         return {"$type": "app.bsky.embed.images", "images": images}
-    if video_blob:
+
+    if videos:
+        item, raw = videos[0]
+        video_blob = await _upload_blob(session, raw, item)
         return {"$type": "app.bsky.embed.video", "video": video_blob}
+
     return None
 
 
@@ -521,6 +521,7 @@ async def publish_outbound(
     text = outbound.text or ""
     media = outbound.media
     bytes_list = media_bytes or []
+    log_id = outbound.source_post_ids[0] if outbound.source_post_ids else "?"
 
     record: dict[str, Any] = {
         "$type": "app.bsky.feed.post",
@@ -529,11 +530,16 @@ async def publish_outbound(
     }
 
     if media and bytes_list:
-        embed = await _build_embed(session, media, bytes_list)
+        embed = await _build_embed(
+            session, media, bytes_list, log_id=log_id
+        )
         if embed:
             record["embed"] = embed
         elif media:
-            logger.warning("Bluesky publish: media upload failed — posting text only")
+            logger.warning(
+                "[%s] Bluesky publish: media upload failed — posting text only",
+                log_id,
+            )
 
     if reply_to:
         parent_uri, parent_cid = _parse_reply_ref(reply_to)

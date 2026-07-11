@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from apis.bluesky import (
+    _build_embed,
     _did_from_uri,
     _extract_media,
     _feed_item_to_post,
@@ -9,7 +12,14 @@ from apis.bluesky import (
     _skip_reason,
     _xrpc_url,
 )
-from apis.types import Post
+from apis.types import MediaItem, Post
+from config import (
+    NETWORK_BLUESKY,
+    NETWORK_LIMITS,
+    NETWORK_LINKEDIN,
+    NETWORK_MASTODON,
+    NETWORK_THREADS,
+)
 
 
 def test_rkey_and_did_from_uri():
@@ -80,3 +90,50 @@ def test_feed_item_to_post_reply_chain():
     assert post.id == "reply1"
     assert post.conversation_id == "root1"
     assert post.in_reply_to_id == "root1"
+
+
+@pytest.mark.asyncio
+async def test_build_embed_rejects_mixed_photo_video(monkeypatch):
+    async def fake_upload(_session, _raw, _item):
+        return {"$type": "blob", "ref": {"$link": "abc"}}
+
+    monkeypatch.setattr("apis.bluesky._upload_blob", fake_upload)
+
+    media = [
+        MediaItem(url="https://cdn/a.jpg", media_type="photo"),
+        MediaItem(url="https://cdn/b.mp4", media_type="video"),
+    ]
+    with pytest.raises(RuntimeError, match="mixed photos and videos"):
+        await _build_embed(None, media, [b"a", b"b"], log_id="1")
+
+
+@pytest.mark.asyncio
+async def test_build_embed_caps_images_at_four(monkeypatch):
+    uploaded: list[str] = []
+
+    async def fake_upload(_session, _raw, item):
+        uploaded.append(item.media_type)
+        return {"$type": "blob", "ref": {"$link": "abc"}}
+
+    monkeypatch.setattr("apis.bluesky._upload_blob", fake_upload)
+
+    media = [MediaItem(url=f"https://cdn/{i}.jpg", media_type="photo") for i in range(6)]
+    embed = await _build_embed(None, media, [b"x"] * 6, log_id="1")
+
+    assert embed["$type"] == "app.bsky.embed.images"
+    assert len(embed["images"]) == 4
+    assert len(uploaded) == 4
+
+
+def test_networks_that_disallow_mixed_media():
+    disallow = {
+        NETWORK_BLUESKY,
+        NETWORK_MASTODON,
+        NETWORK_THREADS,
+        NETWORK_LINKEDIN,
+    }
+    for network, limits in NETWORK_LIMITS.items():
+        if network in disallow:
+            assert limits.allows_mixed_media is False, network
+        else:
+            assert limits.allows_mixed_media is True, network

@@ -3,7 +3,14 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from apis.types import MediaItem, OutboundPost
-from config import NETWORK_LIMITS, NETWORK_MASTODON, NETWORK_TELEGRAM, TELEGRAM_LIMITS
+from config import (
+    NETWORK_BLUESKY,
+    NETWORK_LIMITS,
+    NETWORK_MASTODON,
+    NETWORK_TELEGRAM,
+    NETWORK_TWITTER,
+    TELEGRAM_LIMITS,
+)
 from utils.thread_processor import (
     build_outbound_posts,
     collect_ready_batch,
@@ -166,6 +173,31 @@ def test_build_outbound_posts_splits_mixed_media_for_mastodon(post_factory, phot
     assert out[0].text == "Caption"
     assert out[1].media == [video]
     assert out[1].text == ""
+
+
+@pytest.mark.parametrize(
+    "network",
+    [NETWORK_BLUESKY, NETWORK_MASTODON],
+)
+def test_build_outbound_posts_splits_mixed_media(post_factory, photo, network):
+    video = MediaItem(url="https://example.com/v.mp4", media_type="video")
+    post = post_factory("1", text="Caption", media=[photo, video])
+    out = build_outbound_posts([post], NETWORK_LIMITS[network])
+    assert len(out) == 2
+    assert out[0].media == [photo]
+    assert out[0].text == "Caption"
+    assert out[1].media == [video]
+    assert out[1].text == ""
+
+
+@pytest.mark.parametrize("network", [NETWORK_TWITTER, NETWORK_TELEGRAM])
+def test_build_outbound_posts_keeps_mixed_media(post_factory, photo, network):
+    video = MediaItem(url="https://example.com/v.mp4", media_type="video")
+    post = post_factory("1", text="Caption", media=[photo, video])
+    out = build_outbound_posts([post], NETWORK_LIMITS[network])
+    assert len(out) == 1
+    assert out[0].media == [photo, video]
+    assert out[0].text == "Caption"
 
 
 def test_get_network_limits_known_network():
