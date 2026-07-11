@@ -1,13 +1,17 @@
-from datetime import datetime, timezone
+import httpx
+import pytest
+import respx
 
 from apis.threads import (
+    _create_container,
     _extract_media,
     _item_to_post,
+    _partition_public_media,
     _skip_reason,
     _strip_trailing_links,
     _threads_media_type,
 )
-from apis.types import Post
+from apis.types import MediaItem
 
 
 def test_threads_media_type():
@@ -56,3 +60,52 @@ def test_item_to_post_reply_thread():
     assert post.conversation_id == "100"
     assert post.in_reply_to_id == "150"
     assert post.is_thread_root is False
+
+
+def test_partition_public_media_splits_types():
+    media = [
+        MediaItem(url="https://cdn/a.jpg", media_type="photo"),
+        MediaItem(url="https://cdn/b.mp4", media_type="video"),
+    ]
+    photos, videos = _partition_public_media(media)
+    assert len(photos) == 1
+    assert len(videos) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_container_rejects_mixed_photo_video():
+    media = [
+        MediaItem(url="https://cdn/a.jpg", media_type="photo"),
+        MediaItem(url="https://cdn/b.mp4", media_type="video"),
+    ]
+    with pytest.raises(RuntimeError, match="mixed photos and videos"):
+        await _create_container("token", "123", text="", media=media)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_container_carousel_waits_for_children():
+    user_id = "123"
+    post_n = {"n": 0}
+
+    def on_post(request: httpx.Request) -> httpx.Response:
+        post_n["n"] += 1
+        body = request.content.decode()
+        if "CAROUSEL" in body:
+            return httpx.Response(200, json={"id": "carousel-parent"})
+        return httpx.Response(200, json={"id": f"child-{post_n['n']}"})
+
+    respx.post(f"https://graph.threads.net/v1.0/{user_id}/threads").mock(
+        side_effect=on_post
+    )
+    respx.get(url__regex=r"https://graph\.threads\.net/v1\.0/.*").mock(
+        return_value=httpx.Response(200, json={"status": "FINISHED"})
+    )
+
+    media = [
+        MediaItem(url="https://cdn/a.jpg", media_type="photo"),
+        MediaItem(url="https://cdn/b.jpg", media_type="photo"),
+    ]
+    container_id = await _create_container("token", user_id, text="hi", media=media)
+    assert container_id == "carousel-parent"
+    assert post_n["n"] == 3

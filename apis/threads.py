@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 THREADS_CAROUSEL_CHILD_DELAY_SECONDS = 2
 THREADS_PUBLISH_WAIT_SECONDS = 5
+THREADS_CONTAINER_POLL_SECONDS = 2
+THREADS_CONTAINER_TIMEOUT_SECONDS = 300
 
 AUTH_HELP = """\
 Configure Threads account for mesh sync.
@@ -342,6 +345,79 @@ async def download_media(
         return response.content
 
 
+async def _get_container_status(
+    access_token: str, container_id: str
+) -> tuple[str, str | None]:
+    data = await _api_get(
+        access_token,
+        container_id,
+        params={"fields": "status,error_message"},
+    )
+    return str(data.get("status") or ""), data.get("error_message")
+
+
+async def _wait_for_container(access_token: str, container_id: str) -> None:
+    """Poll until Meta finishes processing a media container (required for video/carousel)."""
+    deadline = time.monotonic() + THREADS_CONTAINER_TIMEOUT_SECONDS
+    last_status = ""
+    while time.monotonic() < deadline:
+        status, error_message = await _get_container_status(access_token, container_id)
+        last_status = status
+        if status in ("FINISHED", "PUBLISHED"):
+            return
+        if status == "ERROR":
+            raise RuntimeError(
+                f"Threads container {container_id} failed: {error_message or status}"
+            )
+        await asyncio.sleep(THREADS_CONTAINER_POLL_SECONDS)
+    raise RuntimeError(
+        f"Threads container {container_id} not ready after "
+        f"{THREADS_CONTAINER_TIMEOUT_SECONDS}s (last status: {last_status or 'unknown'})"
+    )
+
+
+def _partition_public_media(
+    media: list[MediaItem],
+) -> tuple[list[MediaItem], list[MediaItem]]:
+    public = [m for m in media if public_https_url(m.url)]
+    private = [m for m in media if m not in public]
+    if private:
+        logger.warning(
+            "Threads publish: skipping %d non-public media URL(s) (e.g. tgfile:)",
+            len(private),
+        )
+    photos = [m for m in public if m.media_type == "photo"]
+    videos = [m for m in public if m.media_type in ("video", "animated_gif")]
+    return photos, videos
+
+
+async def _create_carousel_children(
+    access_token: str,
+    user_id: str,
+    items: list[MediaItem],
+) -> list[str]:
+    child_ids: list[str] = []
+    for item in items[:20]:
+        if item.media_type == "photo":
+            child_data = {
+                "media_type": "IMAGE",
+                "image_url": item.url,
+                "is_carousel_item": "true",
+            }
+        else:
+            child_data = {
+                "media_type": "VIDEO",
+                "video_url": item.url,
+                "is_carousel_item": "true",
+            }
+        child = await _api_post_form(access_token, f"{user_id}/threads", child_data)
+        child_id = str(child["id"])
+        await _wait_for_container(access_token, child_id)
+        child_ids.append(child_id)
+        await asyncio.sleep(THREADS_CAROUSEL_CHILD_DELAY_SECONDS)
+    return child_ids
+
+
 async def _create_container(
     access_token: str,
     user_id: str,
@@ -350,13 +426,15 @@ async def _create_container(
     media: list[MediaItem],
     reply_to_id: str | None = None,
 ) -> str:
-    public_media = [m for m in media if public_https_url(m.url)]
-    private = [m for m in media if m not in public_media]
-    if private:
-        logger.warning(
-            "Threads publish: skipping %d non-public media URL(s) (e.g. tgfile:)",
-            len(private),
+    photos, videos = _partition_public_media(media)
+
+    if photos and videos:
+        raise RuntimeError(
+            "Threads publish: mixed photos and videos must be split into separate "
+            "outbound messages (configure allows_mixed_media=False upstream)"
         )
+
+    public_media = photos or videos
 
     if not public_media:
         data: dict[str, str] = {"media_type": "TEXT", "text": text or ""}
@@ -375,26 +453,9 @@ async def _create_container(
                 "text": text or "",
             }
     else:
-        child_ids: list[str] = []
-        for item in public_media[:20]:
-            if item.media_type == "photo":
-                child_data = {
-                    "media_type": "IMAGE",
-                    "image_url": item.url,
-                    "is_carousel_item": "true",
-                }
-            else:
-                child_data = {
-                    "media_type": "VIDEO",
-                    "video_url": item.url,
-                    "is_carousel_item": "true",
-                }
-            child = await _api_post_form(
-                access_token, f"{user_id}/threads", child_data
-            )
-            child_ids.append(str(child["id"]))
-            await asyncio.sleep(THREADS_CAROUSEL_CHILD_DELAY_SECONDS)
-
+        child_ids = await _create_carousel_children(
+            access_token, user_id, public_media
+        )
         data = {
             "media_type": "CAROUSEL",
             "children": ",".join(child_ids),
@@ -413,7 +474,9 @@ async def _create_container(
     container_id = result.get("id")
     if not container_id:
         raise RuntimeError(f"Threads create container: missing id in {result}")
-    return str(container_id)
+    container_id = str(container_id)
+    await _wait_for_container(access_token, container_id)
+    return container_id
 
 
 async def _publish_container(

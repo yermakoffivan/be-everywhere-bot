@@ -106,7 +106,9 @@ MASTODON_LIMITS = NetworkLimits(
 
 TWITTER_LIMITS = NetworkLimits(max_text=280, max_caption=280, max_media_group=4)
 
-THREADS_LIMITS = NetworkLimits(max_text=500, max_caption=500, max_media_group=20)
+THREADS_LIMITS = NetworkLimits(
+    max_text=500, max_caption=500, max_media_group=20, allows_mixed_media=False
+)
 BLUESKY_LIMITS = NetworkLimits(max_text=300, max_caption=300, max_media_group=4)
 LINKEDIN_LIMITS = NetworkLimits(
     max_text=3000,
