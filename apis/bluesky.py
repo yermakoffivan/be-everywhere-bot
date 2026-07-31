@@ -10,6 +10,7 @@ from sqlalchemy.engine import Engine
 from utils.http_utils import format_api_error, parse_error_detail
 from apis.types import MediaItem, OutboundPost, Post, PublishResult
 from utils.media import ensure_not_mixed, partition_photos_and_videos
+from utils.posts import sort_chronologically
 from config import BLUESKY_APP, NETWORK_BLUESKY
 from db.accounts import (
     Account,
