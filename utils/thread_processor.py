@@ -13,6 +13,14 @@ def is_old_enough(post: Post, min_age_minutes: int) -> bool:
     return age >= timedelta(minutes=min_age_minutes)
 
 
+def _thread_root(thread: list[Post]) -> Post | None:
+    """Starting post of a conversation (explicit root, else chronological first)."""
+    if not thread:
+        return None
+    ordered = sort_chronologically(thread)
+    return next((p for p in ordered if p.is_thread_root), ordered[0])
+
+
 def collect_ready_batch(
     thread: list[Post],
     *,
@@ -20,12 +28,25 @@ def collect_ready_batch(
     enforce_min_age: bool,
     min_age_minutes: int,
 ) -> list[Post]:
-    """Next unsynced source posts in thread order; stops at first not old enough."""
+    """Next unsynced source posts in thread order.
+
+    Min-age is enforced only on the thread's main (starting) post. Replies are
+    included as soon as the root is ready or already synced — they may still be
+    in progress on the source network, but the thread processor posts them with
+    the root rather than waiting for each reply to age independently.
+    """
+    ordered = sort_chronologically(thread)
+    root = _thread_root(ordered)
     batch: list[Post] = []
-    for post in sort_chronologically(thread):
+    for post in ordered:
         if is_synced(post.id):
             continue
-        if enforce_min_age and not is_old_enough(post, min_age_minutes):
+        if (
+            enforce_min_age
+            and root is not None
+            and post.id == root.id
+            and not is_old_enough(post, min_age_minutes)
+        ):
             break
         batch.append(post)
     return batch

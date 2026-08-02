@@ -220,8 +220,14 @@ def test_is_old_enough(post_factory):
 def test_collect_ready_batch_skips_synced(post_factory):
     now = datetime.now(timezone.utc)
     posts = [
-        post_factory("1", created_at=now - timedelta(hours=1)),
-        post_factory("2", created_at=now - timedelta(minutes=50)),
+        post_factory("1", created_at=now - timedelta(hours=1), is_thread_root=True),
+        post_factory(
+            "2",
+            created_at=now - timedelta(minutes=50),
+            conversation_id="1",
+            in_reply_to_id="1",
+            is_thread_root=False,
+        ),
     ]
     batch = collect_ready_batch(
         posts,
@@ -232,11 +238,21 @@ def test_collect_ready_batch_skips_synced(post_factory):
     assert [p.id for p in batch] == ["2"]
 
 
-def test_collect_ready_batch_stops_at_young_post(post_factory):
+def test_collect_ready_batch_blocks_young_root(post_factory):
     now = datetime.now(timezone.utc)
     posts = [
-        post_factory("1", created_at=now - timedelta(hours=1)),
-        post_factory("2", created_at=now - timedelta(minutes=5)),
+        post_factory(
+            "1",
+            created_at=now - timedelta(minutes=5),
+            is_thread_root=True,
+        ),
+        post_factory(
+            "2",
+            created_at=now - timedelta(minutes=1),
+            conversation_id="1",
+            in_reply_to_id="1",
+            is_thread_root=False,
+        ),
     ]
     batch = collect_ready_batch(
         posts,
@@ -244,15 +260,20 @@ def test_collect_ready_batch_stops_at_young_post(post_factory):
         enforce_min_age=True,
         min_age_minutes=30,
     )
-    assert [p.id for p in batch] == ["1"]
+    assert batch == []
 
 
-def test_collect_ready_batch_collects_older_posts_before_young_gate(post_factory):
+def test_collect_ready_batch_includes_young_replies_when_root_ready(post_factory):
     now = datetime.now(timezone.utc)
     posts = [
-        post_factory("1", created_at=now - timedelta(hours=2)),
-        post_factory("2", created_at=now - timedelta(hours=1)),
-        post_factory("3", created_at=now - timedelta(minutes=5)),
+        post_factory("1", created_at=now - timedelta(hours=1), is_thread_root=True),
+        post_factory(
+            "2",
+            created_at=now - timedelta(minutes=5),
+            conversation_id="1",
+            in_reply_to_id="1",
+            is_thread_root=False,
+        ),
     ]
     batch = collect_ready_batch(
         posts,
@@ -263,9 +284,39 @@ def test_collect_ready_batch_collects_older_posts_before_young_gate(post_factory
     assert [p.id for p in batch] == ["1", "2"]
 
 
+def test_collect_ready_batch_includes_young_replies_when_root_already_synced(
+    post_factory,
+):
+    now = datetime.now(timezone.utc)
+    posts = [
+        post_factory("1", created_at=now - timedelta(hours=2), is_thread_root=True),
+        post_factory(
+            "2",
+            created_at=now - timedelta(minutes=5),
+            conversation_id="1",
+            in_reply_to_id="1",
+            is_thread_root=False,
+        ),
+        post_factory(
+            "3",
+            created_at=now - timedelta(minutes=1),
+            conversation_id="1",
+            in_reply_to_id="2",
+            is_thread_root=False,
+        ),
+    ]
+    batch = collect_ready_batch(
+        posts,
+        is_synced=lambda pid: pid == "1",
+        enforce_min_age=True,
+        min_age_minutes=30,
+    )
+    assert [p.id for p in batch] == ["2", "3"]
+
+
 def test_collect_ready_batch_ignores_min_age_when_disabled(post_factory):
     now = datetime.now(timezone.utc)
-    young = post_factory("1", created_at=now - timedelta(minutes=5))
+    young = post_factory("1", created_at=now - timedelta(minutes=5), is_thread_root=True)
     batch = collect_ready_batch(
         [young],
         is_synced=lambda _pid: False,

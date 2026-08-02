@@ -26,15 +26,19 @@ def post_factory(utc_now):
         conversation_id: str | None = None,
         media: list[MediaItem] | None = None,
         in_reply_to_id: str | None = None,
+        is_thread_root: bool | None = None,
     ) -> Post:
+        conv_id = conversation_id or post_id
+        root = is_thread_root if is_thread_root is not None else (conv_id == post_id)
         return Post(
             id=post_id,
             text=text,
             created_at=created_at or utc_now,
-            conversation_id=conversation_id or post_id,
+            conversation_id=conv_id,
             author_id="author",
             media=media or [],
             in_reply_to_id=in_reply_to_id,
+            is_thread_root=root,
         )
 
     return _make_post

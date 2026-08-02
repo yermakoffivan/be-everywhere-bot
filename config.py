@@ -3,8 +3,8 @@ from pathlib import Path
 
 # --- Timing ---
 
-WATCH_CRON = "0,30 9-23 * * *"  # :00 and :30 each hour, 09:00–23:30 UTC
-POST_MIN_AGE_MINUTES = 60  # do not re-post posts younger than this (may be still in progress)
+WATCH_CRON = "0,30 7-22 * * *"  # :00 and :30 each hour, 07:00–22:30 UTC
+POST_MIN_AGE_MINUTES = 30  # do not re-post main posts younger than this (replies trust the root)
 BACKFILL_POST_DELAY_SECONDS = 3  # pause between posts during --since backfill
 
 # Watch mode: only fetch recent own posts (owned reads are $0.001/post on X API)
