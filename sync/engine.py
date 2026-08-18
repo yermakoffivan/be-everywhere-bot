@@ -403,7 +403,9 @@ async def run_sync(
         )
         return 0
 
-    post_delay = 0 if enforce_min_age else BACKFILL_POST_DELAY_SECONDS
+    # Delay only for explicit --since backfills, not when min-age is off
+    # on the first watch cycle after start/restart.
+    post_delay = BACKFILL_POST_DELAY_SECONDS if since is not None else 0
     if post_delay:
         logger.info("Backfill mode: %.1fs delay between posts", post_delay)
 

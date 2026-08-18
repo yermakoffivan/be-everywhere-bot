@@ -243,7 +243,7 @@ CI runs the same suite on every push and pull request via GitHub Actions (`.gith
 Polls on a **cron schedule** (see `WATCH_CRON` in `config.py`). For each account:
 
 1. Fetches recent posts (skipping mirrored/sync-created posts)
-2. Skips posts younger than **30 minutes** (editable window on source networks)
+2. Skips posts younger than **20 minutes** (editable window on source networks). Ignored on the first cycle after start/restart (`docker compose up`)
 3. Publishes unsynced content to every other account
 4. Records mappings so the same content is never reposted again
 
@@ -286,7 +286,7 @@ tests/                      # pytest suite
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `POST_MIN_AGE_MINUTES` | `30` | Min age for main posts before publishing; thread replies trust the root (watch mode) |
+| `POST_MIN_AGE_MINUTES` | `30` | Min age for main posts before publishing; skipped on first watch cycle after start/restart and on `--since` |
 | `WATCH_CRON` | `0,30 7-22 * * *` | Watch-mode cron schedule (UTC) |
 | `BACKFILL_POST_DELAY_SECONDS` | `3` | Delay between posts in `--since` mode |
 | `TWITTER_FETCH_MAX_PAGES` | `10` | Max X API pages per poll (safety cap) |

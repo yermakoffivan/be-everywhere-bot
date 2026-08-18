@@ -100,13 +100,19 @@ def _seconds_until_next_cron_run(
 
 async def watch_mode(engine) -> None:
     logging.info("Watch mode: cron %s (UTC)", WATCH_CRON)
+    # First cycle after start/restart (e.g. docker compose up) skips min-age
+    # so recent posts are not held until they age past POST_MIN_AGE_MINUTES.
+    first_cycle = True
 
     while True:
+        if first_cycle:
+            logging.info("First run after start — ignoring POST_MIN_AGE_MINUTES")
         try:
-            count = await run_sync(engine, enforce_min_age=True)
+            count = await run_sync(engine, enforce_min_age=not first_cycle)
             logging.info("Sync cycle complete — %d post(s) synced", count)
         except Exception:
             logging.exception("Sync cycle failed")
+        first_cycle = False
 
         delay, next_run = _seconds_until_next_cron_run(WATCH_CRON)
         logging.info(
