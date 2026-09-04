@@ -9,6 +9,14 @@ import httpx
 from sqlalchemy.engine import Engine
 
 from utils.http_utils import format_api_error, parse_error_detail
+from utils.meta_tokens import (
+    THREADS_TOKEN,
+    auth_error_hint,
+    describe_expiry,
+    ensure_fresh_token,
+    initialize_token,
+    token_credentials,
+)
 from utils.text_utils import strip_trailing_patterns
 from apis.types import MediaItem, OutboundPost, Post, PublishResult
 from utils.urls import public_https_url
@@ -38,9 +46,12 @@ You will be asked for:
   1. Access Token — from https://developers.facebook.com/apps/
        → your app → Threads API → generate a User access token
        → required scopes: threads_basic, threads_content_publish
-  2. (optional) Username — your @handle; looked up automatically if omitted
+  2. (optional) App Secret — App settings → Basic → Threads App secret.
+       Only needed to upgrade a short-lived (1 hour) token to a 60-day one.
+  3. (optional) Username — your @handle; looked up automatically if omitted
 
 The token and profile are stored per account label in the local SQLite database.
+Tokens are long-lived (60 days) and renewed automatically before they expire.
 
 Note: Threads API limits publishing to 250 posts per 24 hours per profile.
 Media must be reachable via public HTTPS URL when posting images/videos.
@@ -167,7 +178,12 @@ async def _api_get(
         if not response.is_success:
             detail = parse_error_detail(response)
             raise RuntimeError(
-                format_api_error("Threads", response.status_code, detail)
+                format_api_error(
+                    "Threads",
+                    response.status_code,
+                    detail,
+                    extra=auth_error_hint(THREADS_TOKEN),
+                )
             )
         return response.json()
 
@@ -184,7 +200,12 @@ async def _api_post_form(
         if not response.is_success:
             detail = parse_error_detail(response)
             raise RuntimeError(
-                format_api_error("Threads", response.status_code, detail)
+                format_api_error(
+                    "Threads",
+                    response.status_code,
+                    detail,
+                    extra=auth_error_hint(THREADS_TOKEN),
+                )
             )
         return response.json()
 
@@ -196,12 +217,17 @@ async def _lookup_profile(access_token: str) -> dict[str, Any]:
     return data
 
 
-async def _ensure_profile(engine: Engine, account_id: int) -> dict[str, str]:
+async def _ensure_session(engine: Engine, account_id: int) -> dict[str, str]:
+    """Credentials with a valid (auto-renewed) token and a resolved profile."""
     creds = _require_creds(engine, account_id)
+    access_token = await ensure_fresh_token(
+        engine, account_id, creds, THREADS_TOKEN
+    )
+    creds = {**creds, "access_token": access_token}
     if creds.get("username"):
         return creds
 
-    profile = await _lookup_profile(creds["access_token"])
+    profile = await _lookup_profile(access_token)
     creds = {
         **creds,
         "user_id": str(profile["id"]),
@@ -217,14 +243,18 @@ async def _ensure_profile(engine: Engine, account_id: int) -> dict[str, str]:
 async def authenticate(engine: Engine, label: str = "default") -> Account:
     print(AUTH_HELP)
     access_token = input("Access Token: ").strip()
+    app_secret = input("App Secret (optional, press Enter to skip): ").strip()
     username = input("Username (optional, press Enter to auto-detect): ").strip().lstrip("@")
 
     if not access_token:
         raise RuntimeError("Access token is required.")
 
-    profile = await _lookup_profile(access_token)
+    app_creds = {"app_secret": app_secret} if app_secret else {}
+    token = await initialize_token(THREADS_TOKEN, access_token, app_creds)
+    profile = await _lookup_profile(token.access_token)
     creds = {
-        "access_token": access_token,
+        **app_creds,
+        **token_credentials(token),
         "user_id": str(profile["id"]),
         "username": username or profile.get("username", ""),
     }
@@ -233,12 +263,22 @@ async def authenticate(engine: Engine, label: str = "default") -> Account:
     if existing:
         set_credentials(engine, existing.id, creds)
         update_remote_id(engine, existing.id, creds["user_id"])
-        print(f"Threads account '{label}' updated for @{creds['username']}")
-        return existing
+        action = "updated"
+        account = existing
+    else:
+        account = create_account(engine, NETWORK_THREADS, label, creds["user_id"])
+        set_credentials(engine, account.id, creds)
+        action = "configured"
 
-    account = create_account(engine, NETWORK_THREADS, label, creds["user_id"])
-    set_credentials(engine, account.id, creds)
-    print(f"Threads account '{label}' configured for @{creds['username']}")
+    print(
+        f"Threads account '{label}' {action} for @{creds['username']} "
+        f"— token {describe_expiry(token)}"
+    )
+    if not token.renewed:
+        print(
+            "Could not upgrade this token to a long-lived one. Re-run with the App "
+            "Secret if Threads starts reporting an expired session."
+        )
     return account
 
 
@@ -297,7 +337,7 @@ async def fetch_posts(
     include_replies: bool = True,
     max_pages: int | None = None,
 ) -> list[Post]:
-    creds = await _ensure_profile(engine, account_id)
+    creds = await _ensure_session(engine, account_id)
     access_token = creds["access_token"]
     user_id = creds["user_id"]
 
@@ -506,7 +546,7 @@ async def publish_outbound(
         logger.debug(
             "Threads publish ignores downloaded bytes — API requires public HTTPS URLs"
         )
-    creds = await _ensure_profile(engine, account_id)
+    creds = await _ensure_session(engine, account_id)
     access_token = creds["access_token"]
     user_id = creds["user_id"]
 

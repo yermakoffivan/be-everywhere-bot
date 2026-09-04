@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import httpx
 import pytest
 import respx
@@ -10,8 +12,11 @@ from apis.threads import (
     _skip_reason,
     _strip_trailing_links,
     _threads_media_type,
+    fetch_posts,
 )
 from apis.types import MediaItem
+from db.accounts import create_account, get_all_credentials, set_credentials
+from utils.meta_tokens import THREADS_TOKEN
 
 
 def test_threads_media_type():
@@ -109,3 +114,38 @@ async def test_create_container_carousel_waits_for_children():
     container_id = await _create_container("token", user_id, text="hi", media=media)
     assert container_id == "carousel-parent"
     assert post_n["n"] == 3
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_fetch_posts_renews_expiring_token_before_calling_api(engine):
+    account = create_account(engine, "threads", "default", "123")
+    near_expiry = datetime.now(timezone.utc) + timedelta(days=2)
+    set_credentials(
+        engine,
+        account.id,
+        {
+            "access_token": "stale-token",
+            "user_id": "123",
+            "username": "vas3k",
+            "token_expires_at": near_expiry.isoformat(),
+        },
+    )
+
+    respx.get(THREADS_TOKEN.refresh.url).mock(
+        return_value=httpx.Response(
+            200, json={"access_token": "fresh-token", "expires_in": 5183944}
+        )
+    )
+    fetch = respx.get(url__regex=r"https://graph\.threads\.net/v1\.0/123/.*").mock(
+        return_value=httpx.Response(200, json={"data": [], "paging": {}})
+    )
+
+    posts = await fetch_posts(engine, account.id)
+
+    assert posts == []
+    assert all(
+        call.request.url.params["access_token"] == "fresh-token"
+        for call in fetch.calls
+    )
+    assert get_all_credentials(engine, account.id)["access_token"] == "fresh-token"

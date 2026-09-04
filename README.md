@@ -11,6 +11,7 @@ A small Python app that **mesh-syncs** your posts across **X (Twitter)**, **Thre
 - **Smart filtering** (X) — skips retweets, quote tweets, `@`-replies, and replies to other people
 - **Source-only marker** — append `/x` to a post to keep it on that network only (not mesh-synced)
 - **Link unwrapping** — `t.co` and other shorteners are resolved before posting
+- **Token renewal** — Meta (Threads, Instagram) 60-day tokens are refreshed automatically before they expire
 
 ## Requirements
 
@@ -124,7 +125,7 @@ Use `--label` to connect multiple accounts on the same network (e.g. personal an
 
 **Portal:** [developers.facebook.com](https://developers.facebook.com/apps/)
 
-**What you need:** User access token with Threads scopes
+**What you need:** User access token with Threads scopes (optionally the Threads App Secret)
 
 **Steps:**
 
@@ -132,10 +133,10 @@ Use `--label` to connect multiple accounts on the same network (e.g. personal an
 2. Add the **Threads API** product to your app.
 3. Under **Threads API** → tools / token generator, create a **User access token**.
 4. Grant scopes **`threads_basic`** and **`threads_content_publish`**.
-5. Copy the access token. Username is auto-detected if you leave it blank.
-6. Run `uv run python main.py --auth=threads --label=main` and paste the token.
+5. Copy the access token. Optionally copy the **Threads App secret** from **App settings** → **Basic**.
+6. Run `uv run python main.py --auth=threads --label=main` and paste the token (App Secret and username are optional).
 
-**Notes:** Publishing is limited to **250 posts per 24 hours** per profile. Media must be on a **public HTTPS URL** — posts from X/Mastodon usually work; Telegram-sourced media may publish as text-only.
+**Notes:** Publishing is limited to **250 posts per 24 hours** per profile. Media must be on a **public HTTPS URL** — posts from X/Mastodon usually work; Telegram-sourced media may publish as text-only. See [Meta access tokens](#meta-access-tokens) for how expiry is handled.
 
 ---
 
@@ -182,10 +183,25 @@ Use `--label` to connect multiple accounts on the same network (e.g. personal an
 2. Create or open an app at [Meta for Developers](https://developers.facebook.com/apps/).
 3. Add the **Instagram** product → **API setup with Instagram login**.
 4. Connect your Instagram account and generate a **User access token** with scope **`instagram_business_basic`**.
-5. Copy the access token. Username is auto-detected if omitted.
-6. Run `uv run python main.py --auth=instagram --label=main` and paste the token.
+5. Copy the access token. Optionally copy the **App secret** from **App settings** → **Basic**.
+6. Run `uv run python main.py --auth=instagram --label=main` and paste the token (App Secret and username are optional).
 
-**Notes:** Instagram is **read-only** in mesh sync — feed posts and active **stories** (24 h window) flow out to other networks, never in. Media URLs expire; the bot downloads media at publish time.
+**Notes:** Instagram is **read-only** in mesh sync — feed posts and active **stories** (24 h window) flow out to other networks, never in. Media URLs expire; the bot downloads media at publish time. Accounts connected through **Facebook login** are also asked for the **Facebook App ID**, which Meta requires to renew that flavour of token. See [Meta access tokens](#meta-access-tokens).
+
+---
+
+### Meta access tokens
+
+Threads and Instagram user tokens are valid for **60 days** and can be renewed for another 60 — but only while they are still valid. A token that lapses cannot be recovered and the account has to be connected again.
+
+The bot handles this on its own:
+
+- At `--auth` time a short-lived (1 hour) token is exchanged for a 60-day one when you supply the App Secret. Without the secret, an already-long-lived token is accepted as-is.
+- Before every fetch or publish, the stored token is renewed if it has less than `META_TOKEN_MIN_REMAINING_DAYS` (14) left. The new token and its expiry are written back to `account_credentials`.
+- Failed renewals are retried every `META_TOKEN_RETRY_HOURS` (6) rather than on every sync cycle — Meta rejects tokens younger than 24 hours, so a freshly connected account settles within a day.
+- Accounts connected before this feature existed have no recorded expiry; the bot probes them until Meta reports one.
+
+If the bot is stopped for more than 60 days the token expires anyway. You will see `Threads access token expired on … Re-authenticate: …` in the logs — re-run `--auth` for that network.
 
 ---
 
@@ -292,6 +308,9 @@ tests/                      # pytest suite
 | `TWITTER_FETCH_MAX_PAGES` | `10` | Max X API pages per poll (safety cap) |
 | `TWITTER_FETCH_PAGE_SIZE` | `10` | X tweets per page; next page only if all are new |
 | `WATCH_OVERLAP_HOURS` | `6` | Re-fetch overlap for threads / retries |
+| `META_TOKEN_MIN_REMAINING_DAYS` | `14` | Renew Meta tokens once this little of the 60 days is left |
+| `META_TOKEN_RETRY_HOURS` | `6` | Backoff between failed Meta token renewals |
+| `META_TOKEN_UNKNOWN_EXPIRY_DAYS` | `30` | Renewal cadence when Meta reports no expiry |
 
 ### Upgrading an existing install
 
@@ -343,6 +362,7 @@ Legacy single-account schema is migrated automatically by `001_mesh_accounts`.
 | Instagram stories missing | Stories expire after 24 h; run watch mode regularly |
 | Circular repost | Should not happen — check `mirrored_posts` is populated |
 | HTTP 402 on X | Top up API credits at developer.x.com |
+| `Session has expired` on Threads/Instagram | Token lapsed past its 60-day window; re-run `--auth` for that network |
 
 ```bash
 uv run python main.py -v   # debug logging

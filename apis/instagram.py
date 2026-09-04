@@ -6,6 +6,16 @@ import httpx
 from sqlalchemy.engine import Engine
 
 from utils.http_utils import format_api_error, parse_error_detail
+from utils.meta_tokens import (
+    FACEBOOK_TOKEN,
+    INSTAGRAM_TOKEN,
+    MetaTokenConfig,
+    auth_error_hint,
+    describe_expiry,
+    ensure_fresh_token,
+    initialize_token,
+    token_credentials,
+)
 from apis.types import MediaItem, OutboundPost, Post, PublishResult
 from utils.posts import sort_chronologically
 from config import INSTAGRAM_APP, NETWORK_INSTAGRAM, POST_MIN_AGE_MINUTES, NetworkLimits
@@ -28,11 +38,15 @@ You will be asked for:
   1. Access Token — from https://developers.facebook.com/apps/
        → Instagram product → API setup with Instagram login
        → generate a User access token with instagram_business_basic
-  2. (optional) Username — your @handle; looked up automatically if omitted
+  2. (optional) App Secret — App settings → Basic.
+       Only needed to upgrade a short-lived (1 hour) token to a 60-day one.
+  3. (optional) Username — your @handle; looked up automatically if omitted
 
 Requires an Instagram Business or Creator account. Posts and active stories
 (24 h window) are republished to your other networks. Instagram is never
 used as a destination.
+
+Tokens are long-lived (60 days) and renewed automatically before they expire.
 
 Note: Instagram media URLs expire — the bot downloads media at publish time.
 """
@@ -46,6 +60,10 @@ STORY_FIELDS = "id,caption,media_type,media_url,thumbnail_url,timestamp"
 STORY_ID_PREFIX = "story_"
 POST_ID_PREFIX = "post_"
 STORY_GROUP_PREFIX = "story_group_"
+
+# Which login the stored token came from — they renew through different endpoints.
+TOKEN_KIND_INSTAGRAM = "instagram"
+TOKEN_KIND_FACEBOOK = "facebook"
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -241,7 +259,12 @@ async def _api_get(
         if not response.is_success:
             detail = parse_error_detail(response)
             raise RuntimeError(
-                format_api_error("Instagram", response.status_code, detail)
+                format_api_error(
+                    "Instagram",
+                    response.status_code,
+                    detail,
+                    extra=auth_error_hint(INSTAGRAM_TOKEN),
+                )
             )
         return response.json()
 
@@ -259,6 +282,7 @@ async def _lookup_profile(access_token: str) -> dict[str, str]:
             return {
                 "user_id": str(user_id),
                 "username": data.get("username", ""),
+                "token_kind": TOKEN_KIND_INSTAGRAM,
             }
     except RuntimeError:
         pass
@@ -275,6 +299,7 @@ async def _lookup_profile(access_token: str) -> dict[str, str]:
             return {
                 "user_id": str(ig_account["id"]),
                 "username": ig_account.get("username", ""),
+                "token_kind": TOKEN_KIND_FACEBOOK,
             }
 
     raise RuntimeError(
@@ -283,14 +308,24 @@ async def _lookup_profile(access_token: str) -> dict[str, str]:
     )
 
 
-async def _ensure_profile(engine: Engine, account_id: int) -> dict[str, str]:
+def _token_config(token_kind: str | None) -> MetaTokenConfig:
+    return FACEBOOK_TOKEN if token_kind == TOKEN_KIND_FACEBOOK else INSTAGRAM_TOKEN
+
+
+async def _ensure_session(engine: Engine, account_id: int) -> dict[str, str]:
+    """Credentials with a valid (auto-renewed) token and a resolved profile."""
     creds = _require_creds(engine, account_id)
+    access_token = await ensure_fresh_token(
+        engine, account_id, creds, _token_config(creds.get("token_kind"))
+    )
+    creds = {**creds, "access_token": access_token}
     if creds.get("username"):
         return creds
 
-    profile = await _lookup_profile(creds["access_token"])
+    profile = await _lookup_profile(access_token)
     creds = {**creds, **profile}
     set_credential(engine, account_id, "user_id", creds["user_id"])
+    set_credential(engine, account_id, "token_kind", creds["token_kind"])
     if creds["username"]:
         set_credential(engine, account_id, "username", creds["username"])
     update_remote_id(engine, account_id, creds["user_id"])
@@ -300,30 +335,53 @@ async def _ensure_profile(engine: Engine, account_id: int) -> dict[str, str]:
 async def authenticate(engine: Engine, label: str = "default") -> Account:
     print(AUTH_HELP)
     access_token = input("Access Token: ").strip()
-    username = input("Username (optional, press Enter to auto-detect): ").strip().lstrip("@")
-
     if not access_token:
         raise RuntimeError("Access token is required.")
 
     profile = await _lookup_profile(access_token)
+    token_config = _token_config(profile["token_kind"])
+
+    app_creds: dict[str, str] = {}
+    if token_config is FACEBOOK_TOKEN:
+        # Facebook-login tokens can only be renewed with full app credentials.
+        app_id = input("Facebook App ID: ").strip()
+        if app_id:
+            app_creds["app_id"] = app_id
+    app_secret = input("App Secret (optional, press Enter to skip): ").strip()
+    if app_secret:
+        app_creds["app_secret"] = app_secret
+    username = input("Username (optional, press Enter to auto-detect): ").strip().lstrip("@")
+
+    token = await initialize_token(token_config, access_token, app_creds)
     creds = {
-        "access_token": access_token,
+        **app_creds,
+        **token_credentials(token),
         "user_id": profile["user_id"],
         "username": username or profile.get("username", ""),
+        "token_kind": profile["token_kind"],
     }
 
     existing = find_account(engine, NETWORK_INSTAGRAM, label)
     if existing:
         set_credentials(engine, existing.id, creds)
         update_remote_id(engine, existing.id, creds["user_id"])
-        handle = f"@{creds['username']}" if creds["username"] else creds["user_id"]
-        print(f"Instagram account '{label}' updated for {handle}")
-        return existing
+        action = "updated"
+        account = existing
+    else:
+        account = create_account(engine, NETWORK_INSTAGRAM, label, creds["user_id"])
+        set_credentials(engine, account.id, creds)
+        action = "configured"
 
-    account = create_account(engine, NETWORK_INSTAGRAM, label, creds["user_id"])
-    set_credentials(engine, account.id, creds)
     handle = f"@{creds['username']}" if creds["username"] else creds["user_id"]
-    print(f"Instagram account '{label}' configured for {handle}")
+    print(
+        f"Instagram account '{label}' {action} for {handle} "
+        f"— token {describe_expiry(token)}"
+    )
+    if not token.renewed:
+        print(
+            "Could not upgrade this token to a long-lived one. Re-run with the App "
+            "Secret if Instagram starts reporting an expired session."
+        )
     return account
 
 
@@ -384,7 +442,7 @@ async def fetch_posts(
     include_replies: bool = True,
     max_pages: int | None = None,
 ) -> list[Post]:
-    creds = await _ensure_profile(engine, account_id)
+    creds = await _ensure_session(engine, account_id)
     access_token = creds["access_token"]
     user_id = creds["user_id"]
 

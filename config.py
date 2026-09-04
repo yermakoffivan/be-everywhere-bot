@@ -13,6 +13,12 @@ TWITTER_FETCH_MAX_PAGES = 10  # safety cap on X timeline pages per poll
 WATCH_OVERLAP_HOURS = 6  # re-fetch window for threads / failed publishes
 WATCH_INITIAL_LOOKBACK_HOURS = 48  # first run before any sync state exists
 
+# Meta long-lived tokens (Threads, Instagram, Facebook) last 60 days and can only be
+# renewed while still valid, so the bot renews them well ahead of expiry.
+META_TOKEN_MIN_REMAINING_DAYS = 14  # renew once the token has less than this left
+META_TOKEN_UNKNOWN_EXPIRY_DAYS = 30  # renewal cadence when the API reports no expiry
+META_TOKEN_RETRY_HOURS = 6  # backoff between renewal attempts (Meta needs tokens ≥24h old)
+
 # --- Paths ---
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -73,6 +79,7 @@ class TelegramAppConfig:
 @dataclass(frozen=True)
 class ThreadsAppConfig:
     api_base_url: str = "https://graph.threads.net/v1.0"
+    oauth_base_url: str = "https://graph.threads.net"  # token endpoints are unversioned
 
 
 @dataclass(frozen=True)
@@ -83,6 +90,7 @@ class BlueskyAppConfig:
 @dataclass(frozen=True)
 class InstagramAppConfig:
     api_base_url: str = "https://graph.instagram.com/v21.0"
+    oauth_base_url: str = "https://graph.instagram.com"  # token endpoints are unversioned
     facebook_graph_url: str = "https://graph.facebook.com/v21.0"
 
 
@@ -131,8 +139,15 @@ NETWORK_LIMITS: dict[str, NetworkLimits] = {
 TWITTER_CREDENTIAL_KEYS = ("bearer_token", "user_id", "username")
 TELEGRAM_CREDENTIAL_KEYS = ("bot_token", "channel_id")
 MASTODON_CREDENTIAL_KEYS = ("instance_url", "access_token", "username", "account_id")
-THREADS_CREDENTIAL_KEYS = ("access_token", "user_id", "username")
+THREADS_CREDENTIAL_KEYS = ("access_token", "user_id", "username", "app_secret")
 BLUESKY_CREDENTIAL_KEYS = ("handle", "did", "access_jwt", "refresh_jwt", "pds_url")
 RSS_CREDENTIAL_KEYS = ("feed_url",)
-INSTAGRAM_CREDENTIAL_KEYS = ("access_token", "user_id", "username")
+INSTAGRAM_CREDENTIAL_KEYS = (
+    "access_token",
+    "user_id",
+    "username",
+    "token_kind",
+    "app_id",
+    "app_secret",
+)
 LINKEDIN_CREDENTIAL_KEYS = ("access_token", "person_urn", "display_name")
