@@ -119,7 +119,7 @@ def test_build_outbound_posts_merges_text_only_thread(post_factory, utc_now):
     assert out[0].source_post_ids == ["1", "2"]
 
 
-def test_build_outbound_posts_splits_merged_thread_when_media_exceeds_limit(
+def test_build_outbound_posts_preserves_messages_when_media_exceeds_limit(
     post_factory, utc_now, photo
 ):
     first = post_factory("1", text="photos", created_at=utc_now, media=[photo] * 4)
@@ -133,13 +133,14 @@ def test_build_outbound_posts_splits_merged_thread_when_media_exceeds_limit(
     out = build_outbound_posts([first, second], TELEGRAM_LIMITS)
     assert len(out) == 2
     assert len(out[0].media) == 4
-    assert out[0].text == "photos\n\nmore"
+    assert out[0].text == "photos"
+    assert out[1].text == "more"
     assert len(out[1].media) == 1
-    assert out[0].source_post_ids == ["1", "2"]
-    assert out[1].source_post_ids == ["1", "2"]
+    assert out[0].source_post_ids == ["1"]
+    assert out[1].source_post_ids == ["2"]
 
 
-def test_build_outbound_posts_splits_merged_text_for_short_limit(post_factory, utc_now):
+def test_build_outbound_posts_preserves_messages_for_short_text_limit(post_factory, utc_now):
     first = post_factory("1", text="a" * 300, created_at=utc_now)
     second = post_factory(
         "2",
@@ -152,7 +153,9 @@ def test_build_outbound_posts_splits_merged_text_for_short_limit(post_factory, u
     )
     assert len(out) > 1
     assert all(len(chunk.text) <= 500 for chunk in out)
-    assert all(chunk.source_post_ids == ["1", "2"] for chunk in out)
+    assert [(chunk.text, chunk.source_post_ids) for chunk in out] == [
+        (first.text, ["1"]), (second.text, ["2"]),
+    ]
 
 
 def test_build_outbound_posts_empty_input():
