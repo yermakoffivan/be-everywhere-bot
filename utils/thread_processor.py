@@ -101,28 +101,53 @@ def build_outbound_posts(
         raise ValueError("Destination limits must be positive")
 
     ordered = sort_chronologically(posts)
-    source_ids = [post.id for post in ordered]
-    remaining = "\n\n".join(post.text.strip() for post in ordered if post.text.strip())
-    media = [item for post in ordered for item in post.media]
-    groups = [media]
-    if not limits.allows_mixed_media:
-        groups = [
-            [item for item in media if item.media_type == "photo"],
-            [item for item in media if item.media_type != "photo"],
-        ]
+    combined = OutboundPost(
+        text="\n\n".join(post.text.strip() for post in ordered if post.text.strip()),
+        media=[item for post in ordered for item in post.media],
+        source_post_ids=[post.id for post in ordered],
+    )
+    video_count = sum(item.media_type != "photo" for item in combined.media)
+    mixed_media = 0 < video_count < len(combined.media)
+    text_limit = limits.max_caption if combined.media else limits.max_text
+    if limits.separate_thread_text:
+        text_limit = limits.max_text
+    can_combine = (
+        len(combined.text) <= text_limit
+        and len(combined.media) <= limits.max_media_group
+        and (limits.allows_mixed_media or not mixed_media)
+        and (limits.max_videos_per_post is None or video_count <= limits.max_videos_per_post)
+    )
+    batches = [combined] if can_combine else [
+        OutboundPost(post.text.strip(), list(post.media), [post.id]) for post in ordered
+    ]
 
     outbounds = []
-    for group in groups:
-        group_size = limits.max_media_group
-        if group and group[0].media_type != "photo" and limits.max_videos_per_post is not None:
-            group_size = min(group_size, limits.max_videos_per_post)
-        for offset in range(0, len(group), group_size):
-            attachments = group[offset:offset + group_size]
-            caption = split_text(remaining, limits.max_caption)[0] if remaining else ""
-            remaining = remaining[len(caption):].lstrip()
-            outbounds.append(OutboundPost(caption, attachments, source_ids))
-    for text in split_text(remaining, limits.max_text):
-        outbounds.append(OutboundPost(text=text, source_post_ids=source_ids))
+    for batch in batches:
+        remaining = batch.text
+        separate_text = limits.separate_thread_text and len(remaining) > limits.max_caption
+        groups = []
+        for item in batch.media:
+            is_video = item.media_type != "photo"
+            group = groups[-1] if groups else []
+            video_count = sum(media.media_type != "photo" for media in group)
+            if (
+                not group
+                or len(group) >= limits.max_media_group
+                or (not limits.allows_mixed_media and is_video != (group[0].media_type != "photo"))
+                or (is_video and limits.max_videos_per_post is not None and video_count >= limits.max_videos_per_post)
+            ):
+                group = []
+                groups.append(group)
+            group.append(item)
+
+        for attachments in groups:
+            caption = ""
+            if remaining and not separate_text:
+                caption = split_text(remaining, limits.max_caption)[0]
+                remaining = remaining[len(caption):].lstrip()
+            outbounds.append(OutboundPost(caption, attachments, batch.source_post_ids))
+        for text in split_text(remaining, limits.max_text):
+            outbounds.append(OutboundPost(text=text, source_post_ids=batch.source_post_ids))
     return outbounds
 
 

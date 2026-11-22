@@ -18,12 +18,12 @@ A small Python app that **mesh-syncs** your posts across **X (Twitter)**, **Thre
 
 - Sync original content from source-enabled connections to destination-enabled connections in the same project; skip bot-created posts and content already delivered to that destination.
 - Skip posts ending in `/x`; on reply-filtered networks, descendants with a missing parent are also excluded.
-- Group by source conversation ID, oldest first. Merge unsynced text with blank lines and collect attachments separately; original post boundaries and text-to-attachment associations are not preserved.
-- Split to destination limits: paragraphs → lines → sentences → spaces → hard cuts. Fill media captions first, then publish remaining text; chain resulting posts as replies.
+- Group by source conversation ID, oldest first. Combine the unsynced thread only when its text and media fit the destination; otherwise preserve original message boundaries and keep each message’s media with its text.
+- Split oversized individual messages to destination limits: paragraphs → lines → sentences → spaces → hard cuts. Chain resulting posts as replies.
 - Wait until the root reaches the project’s minimum age (default: 20 minutes) during normal polling; replies need no separate delay. Startup's first cycle and `--since` bypass the age gate.
 - Append later replies to the last mapped destination post; do not rewrite previously delivered content. Resume partial deliveries from saved progress.
 - On X, Threads, Bluesky, and Mastodon, retain own threads with complete locally available parent chains; missing ancestors can exclude legitimate old-thread continuations.
-- Where mixed media is disabled, publish photos before videos. Limits below are bot configuration, not a complete platform capability list.
+- Preserve attachment order; split incompatible media types or oversized groups. Limits below are bot configuration, not a complete platform capability list.
 
 ## Requirements
 
@@ -140,6 +140,7 @@ Use `--label` to connect multiple accounts on the same network (e.g. personal an
 
 **Sync rules:**
 
+- Join a thread into one album when its media fits and its text fits one message. Text over the caption limit stays together in a separate message after the album.
 - Read + publish; 4,096 characters for text, 1,024 for captions; up to 4 mixed photo/video attachments per outbound.
 - Join album members by album ID; ordinary original messages remain separate conversations. Skip replies and forwarded messages.
 - Read incoming channel updates only; no full-history backfill. Extract photos, videos, and animations; skip messages with neither text nor supported media.

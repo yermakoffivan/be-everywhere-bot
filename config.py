@@ -68,6 +68,7 @@ class NetworkLimits:
     max_media_group: int
     allows_mixed_media: bool = True
     max_videos_per_post: int | None = None
+    separate_thread_text: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,7 +112,9 @@ BLUESKY_APP = BlueskyAppConfig()
 INSTAGRAM_APP = InstagramAppConfig()
 LINKEDIN_APP = LinkedInAppConfig()
 
-TELEGRAM_LIMITS = NetworkLimits(max_text=4096, max_caption=1024, max_media_group=4)
+TELEGRAM_LIMITS = NetworkLimits(
+    max_text=4096, max_caption=1024, max_media_group=4, separate_thread_text=True,
+)
 MASTODON_LIMITS = NetworkLimits(
     max_text=500, max_caption=500, max_media_group=4, allows_mixed_media=False,
     max_videos_per_post=1,
